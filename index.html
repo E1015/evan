@@ -3,43 +3,48 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>音游 - 基础下落版</title>
+  <title>音游 - 状态监控版</title>
   <style>
-    /* 保持刚才测试成功的 100vw / 100vh 设置 */
-    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #111; touch-action: none; overscroll-behavior: none; }
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #111; touch-action: none; }
     canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #222; }
+    /* 左上角的监控面板 */
+    #debug {
+      position: absolute; top: 10px; left: 10px;
+      color: #0f0; font-size: 14px; font-family: monospace;
+      pointer-events: none; z-index: 999; background: rgba(0,0,0,0.5); padding: 5px;
+    }
   </style>
 </head>
 <body>
+  <div id="debug">初始化中...</div>
   <canvas id="game"></canvas>
   
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
+    const debugDiv = document.getElementById('debug');
 
     let audioCtx = null;
     let isPlaying = false;
     let startOffset = 0; 
+    let errorLog = "无";
 
-    // --- 游戏参数配置 ---
-    const bpm = 120;                     // 歌曲速度
-    const beatTime = 60 / bpm;           // 每一拍的时间（秒）
-    const laneCount = 4;                 // 4条轨道
-    const fallSpeed = 600;               // 方块下落速度（像素/秒）
-    const judgeLineYOffset = 100;        // 判定线离屏幕底部的距离
-    const hitWindow = 0.15;              // 判定范围（±150毫秒）
+    const bpm = 120;
+    const beatTime = 60 / bpm; 
+    const laneCount = 4;
+    const fallSpeed = 600; // 像素/秒
+    const judgeLineYOffset = 100;
+    const hitWindow = 0.15;
 
-    // --- 自动生成谱面 ---
     let notes = [];
     for (let i = 1; i <= 40; i++) {
       notes.push({
-        time: i * (beatTime / 2), // 每半拍生成一个方块
-        lane: Math.floor(Math.random() * laneCount), // 随机轨道
-        hit: false                // 是否已经被点过
+        time: i * (beatTime / 2), 
+        lane: Math.floor(Math.random() * laneCount),
+        hit: false 
       });
     }
 
-    // --- 高清适配屏幕 ---
     function fitCanvas() {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
@@ -47,17 +52,14 @@
       canvas.height = Math.floor(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    window.addEventListener('resize', fitCanvas);
-    setTimeout(fitCanvas, 100); // 确保屏幕完全加载后适配
+    setTimeout(fitCanvas, 100);
 
-    // --- 获取歌曲当前时间 ---
     function getSongTime() {
       if (!audioCtx || !isPlaying) return 0;
       return audioCtx.currentTime - startOffset;
     }
 
-    // --- 播放音效 ---
-    function playBeep(freq = 880) {
+    function playBeep(freq) {
       if (!audioCtx) return;
       try {
         const now = audioCtx.currentTime;
@@ -69,10 +71,9 @@
         osc.connect(gain).connect(audioCtx.destination);
         osc.start(now);
         osc.stop(now + 0.1);
-      } catch(e) {}
+      } catch(e) { errorLog = e.message; }
     }
 
-    // --- 启动游戏 ---
     async function startGame() {
       try {
         if (!audioCtx) {
@@ -81,11 +82,9 @@
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
         }
-
         isPlaying = true;
-        startOffset = audioCtx.currentTime + 0.5; // 给 0.5 秒准备时间
+        startOffset = audioCtx.currentTime + 0.5;
         
-        // 生成背景“滴、滴、滴”节拍声 (共 20 拍)
         for (let i = 0; i < 20; i++) {
           const beatStartTime = startOffset + i * beatTime;
           const osc = audioCtx.createOscillator();
@@ -98,32 +97,38 @@
           osc.stop(beatStartTime + 0.1);
         }
       } catch (err) {
-        alert("音频启动失败，可能是系统拦截了声音：" + err.message);
+        errorLog = "启动失败:" + err.message;
       }
     }
 
-    // --- 游戏主循环 ---
     function gameLoop() {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      
       ctx.clearRect(0, 0, w, h);
 
-      // 1. 如果还没开始，显示提示字
+      // --- 监控面板实时更新 ---
+      if (isPlaying) {
+        let aTime = audioCtx ? audioCtx.currentTime.toFixed(2) : "null";
+        let sTime = getSongTime().toFixed(2);
+        debugDiv.innerHTML = `状态: 游戏中<br>音频时间: ${aTime}<br>歌曲时间: ${sTime}<br>错误: ${errorLog}`;
+      } else {
+        debugDiv.innerHTML = `状态: 未开始<br>请点击屏幕<br>错误: ${errorLog}`;
+      }
+
       if (!isPlaying) {
         ctx.fillStyle = '#4ade80';
         ctx.font = 'bold 30px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('轻触屏幕开始', w / 2, h / 2);
+        ctx.fillText('请触摸屏幕开始', w / 2, h / 2);
         requestAnimationFrame(gameLoop);
         return;
       }
 
-      // 2. 游戏进行中：画轨道分隔线
       const judgeLineY = h - judgeLineYOffset;
       const laneWidth = w / laneCount;
 
+      // 画轨道
       ctx.strokeStyle = '#444';
       ctx.lineWidth = 2;
       for (let i = 1; i < laneCount; i++) {
@@ -133,7 +138,7 @@
         ctx.stroke();
       }
 
-      // 3. 画底部判定线
+      // 画判定线
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -141,18 +146,15 @@
       ctx.lineTo(w, judgeLineY);
       ctx.stroke();
 
-      // 4. 画掉落的音符方块
+      // 画方块
       const songTime = getSongTime();
       for (const note of notes) {
-        if (note.hit) continue; // 已经点过的跳过
+        if (note.hit) continue;
         
-        // 计算方块离判定线的时间差，然后算出 Y 坐标
         const timeDiff = note.time - songTime;
         const y = judgeLineY - (timeDiff * fallSpeed);
 
-        // 只画屏幕范围内看得到的
         if (y > -50 && y < h + 50) {
           const x = note.lane * laneWidth + 10;
-          // 如果已经过了判定线（timeDiff < 0），颜色变灰
           ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80';
-          ctx.fillRect(x, y - 20, laneWidt
+          // 画得更大一点，防止看不见
