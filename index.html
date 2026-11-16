@@ -11,6 +11,7 @@
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       padding: 15px 30px; font-size: 20px; background: #4ade80; color: #111;
       border: none; border-radius: 8px; font-weight: bold; display: block;
+      z-index: 999; touch-action: manipulation; /* 增加这一行 */
     }
   </style>
 </head>
@@ -19,19 +20,25 @@
   <canvas id="game"></canvas>
   
   <script>
+    // 捕获全局报错，显示在按钮上
+    window.onerror = function(msg, url, lineNo, columnNo, error) {
+      const btn = document.getElementById('start-btn');
+      if(btn) btn.textContent = "报错: " + msg;
+      return false;
+    };
+
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const startBtn = document.getElementById('start-btn');
 
     let audioCtx = null;
     let isPlaying = false;
-    let startOffset = 0; // 歌曲开始的时间点
-    const bpm = 120; // 节拍速度
-    const beatTime = 60 / bpm; // 每一拍多少秒
-    const laneCount = 4; // 4条轨道
-    const fallSpeed = 600; // 下落速度 (像素/秒)
+    let startOffset = 0;
+    const bpm = 120;
+    const beatTime = 60 / bpm;
+    const laneCount = 4;
+    const fallSpeed = 600;
 
-    // 谱面：每半拍(0.5)落下个方块，随机轨道。总共 40 个方块
     let notes = [];
     for (let i = 1; i <= 40; i++) {
       notes.push({
@@ -41,7 +48,6 @@
       });
     }
 
-    // 高清适配
     function fitCanvas() {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
@@ -56,30 +62,29 @@
       return audioCtx.currentTime - startOffset;
     }
 
-    // 播放一个“哔”声 (用作节拍器/点击音效)
     function playBeep(freq = 880) {
       if (!audioCtx) return;
-      const now = audioCtx.currentTime;
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(now);
-      osc.stop(now + 0.1);
+      try {
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      } catch(e) { console.log(e); }
     }
 
-    // 游戏主循环
     function gameLoop() {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      const judgeLineY = h - 100; // 判定线在离底部100px的地方
+      const judgeLineY = h - 100;
       const laneWidth = w / laneCount;
 
       ctx.clearRect(0, 0, w, h);
 
-      // 1. 画轨道分隔线
       ctx.strokeStyle = '#333';
       ctx.lineWidth = 2;
       for (let i = 1; i < laneCount; i++) {
@@ -89,7 +94,6 @@
         ctx.stroke();
       }
 
-      // 2. 画判定线
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -97,29 +101,22 @@
       ctx.lineTo(w, judgeLineY);
       ctx.stroke();
 
-      // 3. 更新并画出方块
       const songTime = getSongTime();
       
       for (const note of notes) {
-        if (note.hit) continue; // 已经点过的跳过
-
-        // 计算距离判定线还有多少秒
+        if (note.hit) continue;
         const timeDiff = note.time - songTime;
-        // 算出Y坐标
         const y = judgeLineY - (timeDiff * fallSpeed);
 
-        // 只画屏幕范围内的方块
         if (y > -50 && y < h + 50) {
           const x = note.lane * laneWidth + 10;
-          ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80'; // 错过了变灰，没到是绿色
+          ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80';
           ctx.fillRect(x, y - 20, laneWidth - 20, 40);
         }
       }
-
       requestAnimationFrame(gameLoop);
     }
 
-    // 处理触摸/点击
     canvas.addEventListener('touchstart', async (e) => {
       e.preventDefault();
       if (!audioCtx || !isPlaying) return;
@@ -133,9 +130,8 @@
         const lane = Math.floor(x / laneWidth);
         const songTime = getSongTime();
 
-        // 寻找这条轨道上，距离当前时间最近的未命中方块
         let hitNote = null;
-        let minDiff = 0.15; // 允许的误差范围（正负0.15秒）
+        let minDiff = 0.15;
 
         for (const note of notes) {
           if (note.hit || note.lane !== lane) continue;
@@ -148,20 +144,20 @@
 
         if (hitNote) {
           hitNote.hit = true;
-          playBeep(1200); // 点中的音效
+          playBeep(1200);
         } else {
-          playBeep(400); // 没点中/空点的音效
+          playBeep(400);
         }
       }
     }, { passive: false });
 
-    // 点击开始按钮
-    startBtn.addEventListener('click', async () => {
+    // 修改按钮触发逻辑，使用 pointerdown 兼容性更好
+    startBtn.addEventListener('pointerdown', async (e) => {
+      e.preventDefault();
       if (isPlaying) return;
       
-      // 初始化音频
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') await audioCtx.resume();
-
-      startBtn.style.display = 'none';
-    
+      try {
+        startBtn.textContent = "加载中...";
+        
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') await audioCtx.resum
