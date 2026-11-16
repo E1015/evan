@@ -3,83 +3,156 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>保底测试</title>
+  <title>音游 - 基础下落版</title>
   <style>
-    /* 增加了这行，强制铺满屏幕，防止某些手机认不出百分比高度 */
-    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #111; touch-action: none; }
-    canvas { display: block; width: 100%; height: 100%; touch-action: none; background: #222; }
-    /* 纯 HTML 提示文字，绝对能看见 */
-    #hint {
-      position: absolute; top: 20px; left: 0; width: 100%; 
-      text-align: center; color: #fff; font-size: 20px; font-family: sans-serif;
-      pointer-events: none; z-index: 10;
-    }
+    /* 保持刚才测试成功的 100vw / 100vh 设置 */
+    html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #111; touch-action: none; overscroll-behavior: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #222; }
   </style>
 </head>
 <body>
-  <div id="hint">请触摸屏幕</div>
   <canvas id="game"></canvas>
   
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
-    const hint = document.getElementById('hint');
 
-    // 1. 先验证画布能不能画东西
-    function initCanvas() {
+    let audioCtx = null;
+    let isPlaying = false;
+    let startOffset = 0; 
+
+    // --- 游戏参数配置 ---
+    const bpm = 120;                     // 歌曲速度
+    const beatTime = 60 / bpm;           // 每一拍的时间（秒）
+    const laneCount = 4;                 // 4条轨道
+    const fallSpeed = 600;               // 方块下落速度（像素/秒）
+    const judgeLineYOffset = 100;        // 判定线离屏幕底部的距离
+    const hitWindow = 0.15;              // 判定范围（±150毫秒）
+
+    // --- 自动生成谱面 ---
+    let notes = [];
+    for (let i = 1; i <= 40; i++) {
+      notes.push({
+        time: i * (beatTime / 2), // 每半拍生成一个方块
+        lane: Math.floor(Math.random() * laneCount), // 随机轨道
+        hit: false                // 是否已经被点过
+      });
+    }
+
+    // --- 高清适配屏幕 ---
+    function fitCanvas() {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      // 在画布中间画一个红圈，只要能看到红圈，说明画布活了
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      ctx.beginPath();
-      ctx.arc(w / 2, h / 2, 50, 0, Math.PI * 2);
-      ctx.strokeStyle = 'red';
-      ctx.lineWidth = 5;
-      ctx.stroke();
     }
-    
-    // 延迟一点点执行，确保屏幕尺寸读取正确
-    setTimeout(initCanvas, 100);
+    window.addEventListener('resize', fitCanvas);
+    setTimeout(fitCanvas, 100); // 确保屏幕完全加载后适配
 
-    // 2. 验证触摸和发声
-    canvas.addEventListener('touchstart', async (e) => {
-      e.preventDefault();
-      hint.innerText = "触摸成功！正在发声...";
+    // --- 获取歌曲当前时间 ---
+    function getSongTime() {
+      if (!audioCtx || !isPlaying) return 0;
+      return audioCtx.currentTime - startOffset;
+    }
 
+    // --- 播放音效 ---
+    function playBeep(freq = 880) {
+      if (!audioCtx) return;
       try {
-        // 创建音频上下文
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new AudioContext();
-        
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      } catch(e) {}
+    }
+
+    // --- 启动游戏 ---
+    async function startGame() {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
         }
 
-        // 播放一个长一点的“滴”声
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+        isPlaying = true;
+        startOffset = audioCtx.currentTime + 0.5; // 给 0.5 秒准备时间
         
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.5);
-
-        setTimeout(() => { hint.innerText = "测试完成！"; }, 1000);
-
+        // 生成背景“滴、滴、滴”节拍声 (共 20 拍)
+        for (let i = 0; i < 20; i++) {
+          const beatStartTime = startOffset + i * beatTime;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.frequency.value = 440;
+          gain.gain.setValueAtTime(0.05, beatStartTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, beatStartTime + 0.1);
+          osc.connect(gain).connect(audioCtx.destination);
+          osc.start(beatStartTime);
+          osc.stop(beatStartTime + 0.1);
+        }
       } catch (err) {
-        hint.innerText = "出错: " + err.message;
-        hint.style.color = "red";
+        alert("音频启动失败，可能是系统拦截了声音：" + err.message);
       }
-    }, { passive: false });
-  </script>
-</body>
-</html>
+    }
+
+    // --- 游戏主循环 ---
+    function gameLoop() {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      
+      ctx.clearRect(0, 0, w, h);
+
+      // 1. 如果还没开始，显示提示字
+      if (!isPlaying) {
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'bold 30px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('轻触屏幕开始', w / 2, h / 2);
+        requestAnimationFrame(gameLoop);
+        return;
+      }
+
+      // 2. 游戏进行中：画轨道分隔线
+      const judgeLineY = h - judgeLineYOffset;
+      const laneWidth = w / laneCount;
+
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 2;
+      for (let i = 1; i < laneCount; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * laneWidth, 0);
+        ctx.lineTo(i * laneWidth, h);
+        ctx.stroke();
+      }
+
+      // 3. 画底部判定线
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, judgeLineY);
+      ctx.lineTo(w, judgeLineY);
+      ctx.stroke();
+
+      // 4. 画掉落的音符方块
+      const songTime = getSongTime();
+      for (const note of notes) {
+        if (note.hit) continue; // 已经点过的跳过
+        
+        // 计算方块离判定线的时间差，然后算出 Y 坐标
+        const timeDiff = note.time - songTime;
+        const y = judgeLineY - (timeDiff * fallSpeed);
+
+        // 只画屏幕范围内看得到的
+        if (y > -50 && y < h + 50) {
+          const x = note.lane * laneWidth + 10;
+          // 如果已经过了判定线（timeDiff < 0），颜色变灰
+          ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80';
+          ctx.fillRect(x, y - 20, laneWidt
