@@ -3,53 +3,55 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>音游 - 兼容版</title>
+  <title>音游 - 打分连击版</title>
   <style>
     html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #111; touch-action: none; }
     canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #222; }
-    
-    /* 使用最基础的网页文字，不受任何绘制影响 */
     #status { 
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
       color: #4ade80; font-size: 30px; font-family: sans-serif; font-weight: bold;
     }
-    #debug {
-      position: absolute; top: 10px; left: 10px;
-      color: #0f0; font-size: 14px; font-family: monospace;
-      background: rgba(0,0,0,0.8); padding: 5px; z-index: 10;
-    }
   </style>
 </head>
 <body>
-  <div id="debug">正在加载...</div>
   <div id="status">请触摸屏幕开始</div>
   <canvas id="game"></canvas>
   
   <script>
-    // 全部使用最古老的 var 和 function，绝不报错
     var canvas = document.getElementById('game');
     var ctx = canvas.getContext('2d');
-    var debugDiv = document.getElementById('debug');
     var statusDiv = document.getElementById('status');
 
     var audioCtx = null;
     var isPlaying = false;
     var startOffset = 0; 
-    var errorLog = "无";
 
+    // 游戏数据
+    var score = 0;
+    var combo = 0;
+    var maxCombo = 0;
+    var hitText = "";      // 当前显示的判定文字 (PERFECT/GREAT/MISS)
+    var hitTextTimer = 0;  // 判定文字消失倒计时
+
+    // 参数
     var bpm = 120;
     var beatTime = 60 / bpm; 
     var laneCount = 4;
     var fallSpeed = 600; 
     var judgeLineYOffset = 100;
-    var hitWindow = 0.15;
+    
+    // 判定窗口
+    var PERFECT_WINDOW = 0.05; // 50ms
+    var GREAT_WINDOW = 0.10;   // 100ms
+    var MISS_WINDOW = 0.15;    // 150ms
 
     var notes = [];
     for (var i = 1; i <= 40; i++) {
       notes.push({
         time: i * (beatTime / 2), 
         lane: Math.floor(Math.random() * laneCount),
-        hit: false 
+        hit: false,
+        missed: false
       });
     }
 
@@ -59,9 +61,7 @@
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      debugDiv.innerHTML = "画布就绪: " + canvas.clientWidth + "x" + canvas.clientHeight;
     }
-    
     fitCanvas();
     window.addEventListener('resize', fitCanvas);
 
@@ -83,7 +83,7 @@
         gain.connect(audioCtx.destination);
         osc.start(now);
         osc.stop(now + 0.1);
-      } catch(e) { errorLog = e.message; }
+      } catch(e) {}
     }
 
     function startGame() {
@@ -92,16 +92,13 @@
           var AudioC = window.AudioContext || window.webkitAudioContext;
           audioCtx = new AudioC();
         }
-        
-        // 兼容老浏览器的音频解锁方式
-        if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
-        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         
         isPlaying = true;
-        statusDiv.style.display = 'none'; // 隐藏提示字
+        statusDiv.style.display = 'none';
         startOffset = audioCtx.currentTime + 0.5;
         
+        // 背景节拍
         for (var i = 0; i < 20; i++) {
           var beatStartTime = startOffset + i * beatTime;
           var osc = audioCtx.createOscillator();
@@ -115,7 +112,7 @@
           osc.stop(beatStartTime + 0.1);
         }
       } catch (err) {
-        errorLog = "启动失败:" + err.message;
+        alert("启动失败: " + err.message);
       }
     }
 
@@ -124,20 +121,27 @@
       var h = canvas.clientHeight;
       ctx.clearRect(0, 0, w, h);
 
-      if (isPlaying) {
-        var aTime = audioCtx ? audioCtx.currentTime.toFixed(2) : "null";
-        var sTime = getSongTime().toFixed(2);
-        debugDiv.innerHTML = '游戏进行中<br>音频: ' + aTime + '<br>歌曲: ' + sTime + '<br>错误: ' + errorLog;
-      } else {
-        debugDiv.innerHTML = '状态: 未开始<br>错误: ' + errorLog;
+      if (!isPlaying) {
         requestAnimationFrame(gameLoop);
         return;
       }
 
+      var songTime = getSongTime();
       var judgeLineY = h - judgeLineYOffset;
       var laneWidth = w / laneCount;
 
-      // 画轨道
+      // 1. 处理 MISS (方块掉落越过判定线，且没被点中)
+      for (var j = 0; j < notes.length; j++) {
+        var note = notes[j];
+        if (!note.hit && !note.missed && songTime > note.time + MISS_WINDOW) {
+          note.missed = true;
+          combo = 0; // 断连击
+          hitText = "MISS";
+          hitTextTimer = 0.5; // 显示 0.5 秒
+        }
+      }
+
+      // 2. 画轨道分隔线
       ctx.strokeStyle = '#444';
       ctx.lineWidth = 2;
       for (var i = 1; i < laneCount; i++) {
@@ -147,7 +151,7 @@
         ctx.stroke();
       }
 
-      // 画判定线
+      // 3. 画判定线
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -155,21 +159,46 @@
       ctx.lineTo(w, judgeLineY);
       ctx.stroke();
 
-      // 画方块
-      var songTime = getSongTime();
-      for (var j = 0; j < notes.length; j++) {
-        var note = notes[j];
-        if (note.hit) continue;
+      // 4. 画方块
+      for (var k = 0; k < notes.length; k++) {
+        var n = notes[k];
+        if (n.hit || n.missed) continue;
         
-        var timeDiff = note.time - songTime;
+        var timeDiff = n.time - songTime;
         var y = judgeLineY - (timeDiff * fallSpeed);
 
         if (y > -50 && y < h + 50) {
-          var x = note.lane * laneWidth + 10;
-          ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80';
+          var x = n.lane * laneWidth + 10;
+          ctx.fillStyle = '#4ade80'; // 没到的全是绿色
           ctx.fillRect(x, y - 25, laneWidth - 20, 50);
         }
       }
+
+      // 5. 画 UI (分数和连击)
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      
+      // 分数
+      ctx.font = 'bold 40px sans-serif';
+      ctx.fillText(score.toString(), w / 2, 30);
+      
+      // 连击
+      if (combo > 1) {
+        ctx.fillStyle = '#fbbf24'; // 连击用金色
+        ctx.font = 'bold 30px sans-serif';
+        ctx.fillText(combo + " COMBO", w / 2, 80);
+      }
+
+      // 6. 画判定文字反馈
+      if (hitTextTimer > 0) {
+        hitTextTimer -= 0.016; // 粗略减去一帧的时间
+        ctx.fillStyle = hitText === 'MISS' ? '#ef4444' : '#4ade80';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(hitText, w / 2, judgeLineY - 80);
+      }
+
       requestAnimationFrame(gameLoop);
     }
 
@@ -191,11 +220,12 @@
         var songTime = getSongTime();
 
         var hitNote = null;
-        var minDiff = hitWindow;
+        var minDiff = MISS_WINDOW; // 只要在 150ms 内就能打到
 
+        // 找最近的一个方块
         for (var j = 0; j < notes.length; j++) {
           var note = notes[j];
-          if (note.hit || note.lane !== lane) continue;
+          if (note.hit || note.missed || note.lane !== lane) continue;
           var diff = Math.abs(note.time - songTime);
           if (diff < minDiff) {
             minDiff = diff;
@@ -203,11 +233,34 @@
           }
         }
 
+        // 如果打到了方块
         if (hitNote) {
           hitNote.hit = true;
-          playBeep(1200);
+          combo++;
+          if (combo > maxCombo) maxCombo = combo;
+
+          // 判定等级
+          if (minDiff <= PERFECT_WINDOW) {
+            hitText = "PERFECT";
+            score += 300;
+            playBeep(1200);
+          } else if (minDiff <= GREAT_WINDOW) {
+            hitText = "GREAT";
+            score += 100;
+            playBeep(880);
+          } else {
+            hitText = "GOOD";
+            score += 50;
+            playBeep(600);
+          }
+          hitTextTimer = 0.5;
         } else {
-          playBeep(400);
+          // 如果点空了（没打到任何方块）
+          playBeep(300);
+          // 如果你想要点空就断连击，把这句取消注释：
+          // combo = 0;
+          // hitText = "MISS";
+          // hitTextTimer = 0.5;
         }
       }
     }, { passive: false });
