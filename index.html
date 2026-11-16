@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>音游最小外壳</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    let audioCtx = null;
+    let touches = [];
+
+    // 高清适配：之后全部按 CSS 逻辑像素绘制
+    function fitCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+    window.addEventListener('resize', fitCanvas);
+
+    function draw() {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // 画一条判定线，先占个位置
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, h - 120);
+      ctx.lineTo(w, h - 120);
+      ctx.stroke();
+
+      // 画出所有触摸点
+      ctx.fillStyle = '#4ade80';
+      for (const t of touches) {
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, 24, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function playBeep() {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.09);
+    }
+
+    canvas.addEventListener('touchstart', async (e) => {
+      e.preventDefault();
+
+      // iOS 必须在用户触摸时解锁音频
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      for (const touch of e.changedTouches) {
+        touches.push({
+          x: touch.clientX - rect.left,
+          y: touch.clientY - rect.top
+        });
+      }
+      playBeep();
+      draw();
+    }, { passive: false });
+
+    // 松手后清掉点，方便反复测试
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      touches = [];
+      draw();
+    }, { passive: false });
+
+    fitCanvas();
+  </script>
+</body>
+</html>
