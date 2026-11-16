@@ -2,114 +2,166 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>音游最小外壳</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>音游 - 节奏测试</title>
   <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #111;
-      touch-action: none;
-      overscroll-behavior: none;
-    }
-    canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-      touch-action: none;
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; touch-action: none; overscroll-behavior: none; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #start-btn {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      padding: 15px 30px; font-size: 20px; background: #4ade80; color: #111;
+      border: none; border-radius: 8px; font-weight: bold; display: block;
     }
   </style>
 </head>
 <body>
+  <button id="start-btn">点击开始</button>
   <canvas id="game"></canvas>
+  
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('start-btn');
 
     let audioCtx = null;
-    let touches = [];
+    let isPlaying = false;
+    let startOffset = 0; // 歌曲开始的时间点
+    const bpm = 120; // 节拍速度
+    const beatTime = 60 / bpm; // 每一拍多少秒
+    const laneCount = 4; // 4条轨道
+    const fallSpeed = 600; // 下落速度 (像素/秒)
 
-    // 高清适配：之后全部按 CSS 逻辑像素绘制
+    // 谱面：每半拍(0.5)落下个方块，随机轨道。总共 40 个方块
+    let notes = [];
+    for (let i = 1; i <= 40; i++) {
+      notes.push({
+        time: i * (beatTime / 2),
+        lane: Math.floor(Math.random() * laneCount),
+        hit: false
+      });
+    }
+
+    // 高清适配
     function fitCanvas() {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      draw();
     }
     window.addEventListener('resize', fitCanvas);
 
-    function draw() {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-
-      ctx.clearRect(0, 0, w, h);
-
-      // 画一条判定线，先占个位置
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(0, h - 120);
-      ctx.lineTo(w, h - 120);
-      ctx.stroke();
-
-      // 画出所有触摸点
-      ctx.fillStyle = '#4ade80';
-      for (const t of touches) {
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, 24, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    function getSongTime() {
+      if (!audioCtx || !isPlaying) return 0;
+      return audioCtx.currentTime - startOffset;
     }
 
-    function playBeep() {
+    // 播放一个“哔”声 (用作节拍器/点击音效)
+    function playBeep(freq = 880) {
       if (!audioCtx) return;
       const now = audioCtx.currentTime;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
       osc.connect(gain).connect(audioCtx.destination);
       osc.start(now);
-      osc.stop(now + 0.09);
+      osc.stop(now + 0.1);
     }
 
+    // 游戏主循环
+    function gameLoop() {
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      const judgeLineY = h - 100; // 判定线在离底部100px的地方
+      const laneWidth = w / laneCount;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // 1. 画轨道分隔线
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 2;
+      for (let i = 1; i < laneCount; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * laneWidth, 0);
+        ctx.lineTo(i * laneWidth, h);
+        ctx.stroke();
+      }
+
+      // 2. 画判定线
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, judgeLineY);
+      ctx.lineTo(w, judgeLineY);
+      ctx.stroke();
+
+      // 3. 更新并画出方块
+      const songTime = getSongTime();
+      
+      for (const note of notes) {
+        if (note.hit) continue; // 已经点过的跳过
+
+        // 计算距离判定线还有多少秒
+        const timeDiff = note.time - songTime;
+        // 算出Y坐标
+        const y = judgeLineY - (timeDiff * fallSpeed);
+
+        // 只画屏幕范围内的方块
+        if (y > -50 && y < h + 50) {
+          const x = note.lane * laneWidth + 10;
+          ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80'; // 错过了变灰，没到是绿色
+          ctx.fillRect(x, y - 20, laneWidth - 20, 40);
+        }
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    // 处理触摸/点击
     canvas.addEventListener('touchstart', async (e) => {
       e.preventDefault();
-
-      // iOS 必须在用户触摸时解锁音频
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
+      if (!audioCtx || !isPlaying) return;
 
       const rect = canvas.getBoundingClientRect();
+      const w = canvas.clientWidth;
+      const laneWidth = w / laneCount;
+
       for (const touch of e.changedTouches) {
-        touches.push({
-          x: touch.clientX - rect.left,
-          y: touch.clientY - rect.top
-        });
+        const x = touch.clientX - rect.left;
+        const lane = Math.floor(x / laneWidth);
+        const songTime = getSongTime();
+
+        // 寻找这条轨道上，距离当前时间最近的未命中方块
+        let hitNote = null;
+        let minDiff = 0.15; // 允许的误差范围（正负0.15秒）
+
+        for (const note of notes) {
+          if (note.hit || note.lane !== lane) continue;
+          const diff = Math.abs(note.time - songTime);
+          if (diff < minDiff) {
+            minDiff = diff;
+            hitNote = note;
+          }
+        }
+
+        if (hitNote) {
+          hitNote.hit = true;
+          playBeep(1200); // 点中的音效
+        } else {
+          playBeep(400); // 没点中/空点的音效
+        }
       }
-      playBeep();
-      draw();
     }, { passive: false });
 
-    // 松手后清掉点，方便反复测试
-    canvas.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      touches = [];
-      draw();
-    }, { passive: false });
+    // 点击开始按钮
+    startBtn.addEventListener('click', async () => {
+      if (isPlaying) return;
+      
+      // 初始化音频
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-    fitCanvas();
-  </script>
-</body>
-</html>
+      startBtn.style.display = 'none';
+    
