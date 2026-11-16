@@ -3,41 +3,49 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>音游 - 状态监控版</title>
+  <title>音游 - 兼容版</title>
   <style>
     html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #111; touch-action: none; }
     canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #222; }
-    /* 左上角的监控面板 */
+    
+    /* 使用最基础的网页文字，不受任何绘制影响 */
+    #status { 
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+      color: #4ade80; font-size: 30px; font-family: sans-serif; font-weight: bold;
+    }
     #debug {
       position: absolute; top: 10px; left: 10px;
       color: #0f0; font-size: 14px; font-family: monospace;
-      pointer-events: none; z-index: 999; background: rgba(0,0,0,0.5); padding: 5px;
+      background: rgba(0,0,0,0.8); padding: 5px; z-index: 10;
     }
   </style>
 </head>
 <body>
-  <div id="debug">初始化中...</div>
+  <div id="debug">正在加载...</div>
+  <div id="status">请触摸屏幕开始</div>
   <canvas id="game"></canvas>
   
   <script>
-    const canvas = document.getElementById('game');
-    const ctx = canvas.getContext('2d');
-    const debugDiv = document.getElementById('debug');
+    // 全部使用最古老的 var 和 function，绝不报错
+    var canvas = document.getElementById('game');
+    var ctx = canvas.getContext('2d');
+    var debugDiv = document.getElementById('debug');
+    var statusDiv = document.getElementById('status');
 
-    let audioCtx = null;
-    let isPlaying = false;
-    let startOffset = 0; 
-    let errorLog = "无";
+    var audioCtx = null;
+    var isPlaying = false;
+    var startOffset = 0; 
+    var errorLog = "无";
 
-    const bpm = 120;
-    const beatTime = 60 / bpm; 
-    const laneCount = 4;
-    const fallSpeed = 600; // 像素/秒
-    const judgeLineYOffset = 100;
-    const hitWindow = 0.15;
+    var bpm = 120;
+    var beatTime = 60 / bpm; 
+    var laneCount = 4;
+    var fallSpeed = 600; 
+    var judgeLineYOffset = 100;
+    var hitWindow = 0.15;
 
-    let notes = [];
-    for (let i = 1; i <= 40; i++) {
+    var notes = [];
+    for (var i = 1; i <= 40; i++) {
       notes.push({
         time: i * (beatTime / 2), 
         lane: Math.floor(Math.random() * laneCount),
@@ -46,13 +54,16 @@
     }
 
     function fitCanvas() {
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
+      var dpr = window.devicePixelRatio || 1;
+      var rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      debugDiv.innerHTML = "画布就绪: " + canvas.clientWidth + "x" + canvas.clientHeight;
     }
-    setTimeout(fitCanvas, 100);
+    
+    fitCanvas();
+    window.addEventListener('resize', fitCanvas);
 
     function getSongTime() {
       if (!audioCtx || !isPlaying) return 0;
@@ -62,37 +73,44 @@
     function playBeep(freq) {
       if (!audioCtx) return;
       try {
-        const now = audioCtx.currentTime;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
+        var now = audioCtx.currentTime;
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
         osc.frequency.value = freq;
         gain.gain.setValueAtTime(0.1, now);
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-        osc.connect(gain).connect(audioCtx.destination);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         osc.start(now);
         osc.stop(now + 0.1);
       } catch(e) { errorLog = e.message; }
     }
 
-    async function startGame() {
+    function startGame() {
       try {
         if (!audioCtx) {
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          var AudioC = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new AudioC();
         }
+        
+        // 兼容老浏览器的音频解锁方式
         if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
+          audioCtx.resume();
         }
+        
         isPlaying = true;
+        statusDiv.style.display = 'none'; // 隐藏提示字
         startOffset = audioCtx.currentTime + 0.5;
         
-        for (let i = 0; i < 20; i++) {
-          const beatStartTime = startOffset + i * beatTime;
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
+        for (var i = 0; i < 20; i++) {
+          var beatStartTime = startOffset + i * beatTime;
+          var osc = audioCtx.createOscillator();
+          var gain = audioCtx.createGain();
           osc.frequency.value = 440;
           gain.gain.setValueAtTime(0.05, beatStartTime);
           gain.gain.exponentialRampToValueAtTime(0.001, beatStartTime + 0.1);
-          osc.connect(gain).connect(audioCtx.destination);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
           osc.start(beatStartTime);
           osc.stop(beatStartTime + 0.1);
         }
@@ -102,36 +120,27 @@
     }
 
     function gameLoop() {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
+      var w = canvas.clientWidth;
+      var h = canvas.clientHeight;
       ctx.clearRect(0, 0, w, h);
 
-      // --- 监控面板实时更新 ---
       if (isPlaying) {
-        let aTime = audioCtx ? audioCtx.currentTime.toFixed(2) : "null";
-        let sTime = getSongTime().toFixed(2);
-        debugDiv.innerHTML = `状态: 游戏中<br>音频时间: ${aTime}<br>歌曲时间: ${sTime}<br>错误: ${errorLog}`;
+        var aTime = audioCtx ? audioCtx.currentTime.toFixed(2) : "null";
+        var sTime = getSongTime().toFixed(2);
+        debugDiv.innerHTML = '游戏进行中<br>音频: ' + aTime + '<br>歌曲: ' + sTime + '<br>错误: ' + errorLog;
       } else {
-        debugDiv.innerHTML = `状态: 未开始<br>请点击屏幕<br>错误: ${errorLog}`;
-      }
-
-      if (!isPlaying) {
-        ctx.fillStyle = '#4ade80';
-        ctx.font = 'bold 30px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('请触摸屏幕开始', w / 2, h / 2);
+        debugDiv.innerHTML = '状态: 未开始<br>错误: ' + errorLog;
         requestAnimationFrame(gameLoop);
         return;
       }
 
-      const judgeLineY = h - judgeLineYOffset;
-      const laneWidth = w / laneCount;
+      var judgeLineY = h - judgeLineYOffset;
+      var laneWidth = w / laneCount;
 
       // 画轨道
       ctx.strokeStyle = '#444';
       ctx.lineWidth = 2;
-      for (let i = 1; i < laneCount; i++) {
+      for (var i = 1; i < laneCount; i++) {
         ctx.beginPath();
         ctx.moveTo(i * laneWidth, 0);
         ctx.lineTo(i * laneWidth, h);
@@ -147,14 +156,63 @@
       ctx.stroke();
 
       // 画方块
-      const songTime = getSongTime();
-      for (const note of notes) {
+      var songTime = getSongTime();
+      for (var j = 0; j < notes.length; j++) {
+        var note = notes[j];
         if (note.hit) continue;
         
-        const timeDiff = note.time - songTime;
-        const y = judgeLineY - (timeDiff * fallSpeed);
+        var timeDiff = note.time - songTime;
+        var y = judgeLineY - (timeDiff * fallSpeed);
 
         if (y > -50 && y < h + 50) {
-          const x = note.lane * laneWidth + 10;
+          var x = note.lane * laneWidth + 10;
           ctx.fillStyle = timeDiff < 0 ? '#666' : '#4ade80';
-          // 画得更大一点，防止看不见
+          ctx.fillRect(x, y - 25, laneWidth - 20, 50);
+        }
+      }
+      requestAnimationFrame(gameLoop);
+    }
+
+    canvas.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      if (!isPlaying) {
+        startGame();
+        return;
+      }
+
+      var rect = canvas.getBoundingClientRect();
+      var w = canvas.clientWidth;
+      var laneWidth = w / laneCount;
+
+      for (var i = 0; i < e.changedTouches.length; i++) {
+        var touch = e.changedTouches[i];
+        var x = touch.clientX - rect.left;
+        var lane = Math.floor(x / laneWidth);
+        var songTime = getSongTime();
+
+        var hitNote = null;
+        var minDiff = hitWindow;
+
+        for (var j = 0; j < notes.length; j++) {
+          var note = notes[j];
+          if (note.hit || note.lane !== lane) continue;
+          var diff = Math.abs(note.time - songTime);
+          if (diff < minDiff) {
+            minDiff = diff;
+            hitNote = note;
+          }
+        }
+
+        if (hitNote) {
+          hitNote.hit = true;
+          playBeep(1200);
+        } else {
+          playBeep(400);
+        }
+      }
+    }, { passive: false });
+
+    requestAnimationFrame(gameLoop); 
+  </script>
+</body>
+</html>
