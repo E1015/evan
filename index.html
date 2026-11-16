@@ -3,33 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>音游 - 节奏测试</title>
+  <title>音游 - 纯画布版</title>
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; touch-action: none; overscroll-behavior: none; }
     canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-    #start-btn {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      padding: 15px 30px; font-size: 20px; background: #4ade80; color: #111;
-      border: none; border-radius: 8px; font-weight: bold; display: block;
-      z-index: 999; touch-action: manipulation; /* 增加这一行 */
-    }
   </style>
 </head>
 <body>
-  <button id="start-btn">点击开始</button>
   <canvas id="game"></canvas>
   
   <script>
-    // 捕获全局报错，显示在按钮上
-    window.onerror = function(msg, url, lineNo, columnNo, error) {
-      const btn = document.getElementById('start-btn');
-      if(btn) btn.textContent = "报错: " + msg;
-      return false;
-    };
-
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
-    const startBtn = document.getElementById('start-btn');
 
     let audioCtx = null;
     let isPlaying = false;
@@ -38,6 +23,7 @@
     const beatTime = 60 / bpm;
     const laneCount = 4;
     const fallSpeed = 600;
+    let errorMsg = ""; // 用来在屏幕上显示错误
 
     let notes = [];
     for (let i = 1; i <= 40; i++) {
@@ -74,16 +60,64 @@
         osc.connect(gain).connect(audioCtx.destination);
         osc.start(now);
         osc.stop(now + 0.1);
-      } catch(e) { console.log(e); }
+      } catch(e) { errorMsg = "发声失败: " + e.message; }
+    }
+
+    // 启动游戏的核心函数
+    async function startGame() {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        isPlaying = true;
+        startOffset = audioCtx.currentTime + 0.2;
+        
+        for (let i = 0; i < 20; i++) {
+          const beatStartTime = startOffset + i * beatTime;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.frequency.value = 440;
+          gain.gain.setValueAtTime(0.05, beatStartTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, beatStartTime + 0.1);
+          osc.connect(gain).connect(audioCtx.destination);
+          osc.start(beatStartTime);
+          osc.stop(beatStartTime + 0.1);
+        }
+        gameLoop();
+      } catch (err) {
+        errorMsg = "启动失败: " + err.message;
+      }
     }
 
     function gameLoop() {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
+      ctx.clearRect(0, 0, w, h);
+
+      // 如果还没开始，画出开始提示
+      if (!isPlaying) {
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'bold 30px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('轻触屏幕开始', w / 2, h / 2);
+        
+        if (errorMsg) {
+          ctx.fillStyle = 'red';
+          ctx.font = '16px sans-serif';
+          ctx.fillText(errorMsg, w / 2, h / 2 + 50);
+        }
+        requestAnimationFrame(gameLoop);
+        return;
+      }
+
+      // --- 游戏开始后的画面 ---
       const judgeLineY = h - 100;
       const laneWidth = w / laneCount;
-
-      ctx.clearRect(0, 0, w, h);
 
       ctx.strokeStyle = '#333';
       ctx.lineWidth = 2;
@@ -102,7 +136,6 @@
       ctx.stroke();
 
       const songTime = getSongTime();
-      
       for (const note of notes) {
         if (note.hit) continue;
         const timeDiff = note.time - songTime;
@@ -117,47 +150,19 @@
       requestAnimationFrame(gameLoop);
     }
 
+    // 所有的触摸都在画布上处理
     canvas.addEventListener('touchstart', async (e) => {
       e.preventDefault();
-      if (!audioCtx || !isPlaying) return;
+      
+      if (!isPlaying) {
+        startGame();
+        return;
+      }
 
+      // 游戏中的判定
       const rect = canvas.getBoundingClientRect();
       const w = canvas.clientWidth;
       const laneWidth = w / laneCount;
 
       for (const touch of e.changedTouches) {
-        const x = touch.clientX - rect.left;
-        const lane = Math.floor(x / laneWidth);
-        const songTime = getSongTime();
-
-        let hitNote = null;
-        let minDiff = 0.15;
-
-        for (const note of notes) {
-          if (note.hit || note.lane !== lane) continue;
-          const diff = Math.abs(note.time - songTime);
-          if (diff < minDiff) {
-            minDiff = diff;
-            hitNote = note;
-          }
-        }
-
-        if (hitNote) {
-          hitNote.hit = true;
-          playBeep(1200);
-        } else {
-          playBeep(400);
-        }
-      }
-    }, { passive: false });
-
-    // 修改按钮触发逻辑，使用 pointerdown 兼容性更好
-    startBtn.addEventListener('pointerdown', async (e) => {
-      e.preventDefault();
-      if (isPlaying) return;
-      
-      try {
-        startBtn.textContent = "加载中...";
-        
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') await audioCtx.resum
+        const x = touch.clientX - rect.l
